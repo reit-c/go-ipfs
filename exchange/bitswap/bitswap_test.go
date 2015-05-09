@@ -58,8 +58,6 @@ func TestProviderForKeyButNetworkCannotFind(t *testing.T) { // TODO revisit this
 	}
 }
 
-// TestGetBlockAfterRequesting...
-
 func TestGetBlockFromPeerAfterPeerAnnounces(t *testing.T) {
 
 	net := tn.VirtualNetwork(mockrouting.NewServer(), delay.Fixed(kNetworkDelay))
@@ -67,14 +65,15 @@ func TestGetBlockFromPeerAfterPeerAnnounces(t *testing.T) {
 	g := NewTestSessionGenerator(net)
 	defer g.Close()
 
-	hasBlock := g.Next()
+	peers := g.Instances(2)
+	hasBlock := peers[0]
 	defer hasBlock.Exchange.Close()
 
 	if err := hasBlock.Exchange.HasBlock(context.Background(), block); err != nil {
 		t.Fatal(err)
 	}
 
-	wantsBlock := g.Next()
+	wantsBlock := peers[1]
 	defer wantsBlock.Exchange.Close()
 
 	ctx, _ := context.WithTimeout(context.Background(), time.Second)
@@ -121,6 +120,16 @@ func TestLargeFile(t *testing.T) {
 	PerformDistributionTest(t, numInstances, numBlocks)
 }
 
+func TestLargeFileTwoPeers(t *testing.T) {
+	if testing.Short() {
+		t.SkipNow()
+	}
+	t.Parallel()
+	numInstances := 2
+	numBlocks := 100
+	PerformDistributionTest(t, numInstances, numBlocks)
+}
+
 func PerformDistributionTest(t *testing.T, numInstances, numBlocks int) {
 	if testing.Short() {
 		t.SkipNow()
@@ -129,8 +138,6 @@ func PerformDistributionTest(t *testing.T, numInstances, numBlocks int) {
 	sg := NewTestSessionGenerator(net)
 	defer sg.Close()
 	bg := blocksutil.NewBlockGenerator()
-
-	t.Log("Test a few nodes trying to get one file with a lot of blocks")
 
 	instances := sg.Instances(numInstances)
 	blocks := bg.Blocks(numBlocks)
@@ -196,8 +203,9 @@ func TestSendToWantingPeer(t *testing.T) {
 	prev := rebroadcastDelay.Set(time.Second / 2)
 	defer func() { rebroadcastDelay.Set(prev) }()
 
-	peerA := sg.Next()
-	peerB := sg.Next()
+	peers := sg.Instances(2)
+	peerA := peers[0]
+	peerB := peers[1]
 
 	t.Logf("Session %v\n", peerA.Peer)
 	t.Logf("Session %v\n", peerB.Peer)
@@ -238,7 +246,7 @@ func TestBasicBitswap(t *testing.T) {
 	defer sg.Close()
 	bg := blocksutil.NewBlockGenerator()
 
-	t.Log("Test a few nodes trying to get one file with a lot of blocks")
+	t.Log("Test a one node trying to get one block from another")
 
 	instances := sg.Instances(2)
 	blocks := bg.Blocks(1)
