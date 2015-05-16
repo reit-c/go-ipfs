@@ -28,9 +28,11 @@ type WantManager struct {
 	wl *wantlist.Wantlist
 
 	network bsnet.BitSwapNetwork
+
+	ctx context.Context
 }
 
-func NewWantManager(network bsnet.BitSwapNetwork) *WantManager {
+func NewWantManager(ctx context.Context, network bsnet.BitSwapNetwork) *WantManager {
 	return &WantManager{
 		incoming:   make(chan []*bsmsg.Entry, 10),
 		connect:    make(chan peer.ID, 10),
@@ -38,6 +40,7 @@ func NewWantManager(network bsnet.BitSwapNetwork) *WantManager {
 		peers:      make(map[peer.ID]*msgQueue),
 		wl:         wantlist.New(),
 		network:    network,
+		ctx:        ctx,
 	}
 }
 
@@ -62,12 +65,10 @@ type msgQueue struct {
 }
 
 func (pm *WantManager) WantBlocks(ks []u.Key) {
-	log.Error("WANT: ", ks)
 	pm.addEntries(ks, false)
 }
 
 func (pm *WantManager) CancelWants(ks []u.Key) {
-	log.Error("CANCEL: ", ks)
 	pm.addEntries(ks, true)
 }
 
@@ -82,7 +83,10 @@ func (pm *WantManager) addEntries(ks []u.Key, cancel bool) {
 			},
 		})
 	}
-	pm.incoming <- entries
+	select {
+	case pm.incoming <- entries:
+	case <-pm.ctx.Done():
+	}
 }
 
 func (pm *WantManager) SendBlock(ctx context.Context, env *engine.Envelope) {
@@ -99,7 +103,7 @@ func (pm *WantManager) SendBlock(ctx context.Context, env *engine.Envelope) {
 	}
 }
 
-func (pm *WantManager) startPeerHandler(ctx context.Context, p peer.ID) *msgQueue {
+func (pm *WantManager) startPeerHandler(p peer.ID) *msgQueue {
 	_, ok := pm.peers[p]
 	if ok {
 		// TODO: log an error?
@@ -118,7 +122,7 @@ func (pm *WantManager) startPeerHandler(ctx context.Context, p peer.ID) *msgQueu
 	mq.work <- struct{}{}
 
 	pm.peers[p] = mq
-	go pm.runQueue(ctx, mq)
+	go pm.runQueue(mq)
 	return mq
 }
 
@@ -133,12 +137,12 @@ func (pm *WantManager) stopPeerHandler(p peer.ID) {
 	delete(pm.peers, p)
 }
 
-func (pm *WantManager) runQueue(ctx context.Context, mq *msgQueue) {
+func (pm *WantManager) runQueue(mq *msgQueue) {
 	for {
 		select {
 		case <-mq.work: // there is work to be done
 
-			err := pm.network.ConnectTo(ctx, mq.p)
+			err := pm.network.ConnectTo(pm.ctx, mq.p)
 			if err != nil {
 				log.Error(err)
 				// TODO: cant connect, what now?
@@ -147,21 +151,15 @@ func (pm *WantManager) runQueue(ctx context.Context, mq *msgQueue) {
 			// grab outgoing message
 			mq.outlk.Lock()
 			wlm := mq.out
+			if wlm == nil || wlm.Empty() {
+				mq.outlk.Unlock()
+				continue
+			}
 			mq.out = nil
 			mq.outlk.Unlock()
 
-			// no message or empty message, continue
-			if wlm == nil {
-				log.Error("nil wantlist")
-				continue
-			}
-			if wlm.Empty() {
-				log.Error("empty wantlist")
-				continue
-			}
-
 			// send wantlist updates
-			err = pm.network.SendMessage(ctx, mq.p, wlm)
+			err = pm.network.SendMessage(pm.ctx, mq.p, wlm)
 			if err != nil {
 				log.Error("bitswap send error: ", err)
 				// TODO: what do we do if this fails?
@@ -181,34 +179,30 @@ func (pm *WantManager) Disconnected(p peer.ID) {
 }
 
 // TODO: use goprocess here once i trust it
-func (pm *WantManager) Run(ctx context.Context) {
+func (pm *WantManager) Run() {
 	for {
 		select {
 		case entries := <-pm.incoming:
 
-			msg := bsmsg.New()
-			msg.SetFull(false)
 			// add changes to our wantlist
 			for _, e := range entries {
 				if e.Cancel {
 					pm.wl.Remove(e.Key)
-					msg.Cancel(e.Key)
 				} else {
 					pm.wl.Add(e.Key, e.Priority)
-					msg.AddEntry(e.Key, e.Priority)
 				}
 			}
 
 			// broadcast those wantlist changes
 			for _, p := range pm.peers {
-				p.addMessage(msg)
+				p.addMessage(entries)
 			}
 
 		case p := <-pm.connect:
-			pm.startPeerHandler(ctx, p)
+			pm.startPeerHandler(p)
 		case p := <-pm.disconnect:
 			pm.stopPeerHandler(p)
-		case <-ctx.Done():
+		case <-pm.ctx.Done():
 			return
 		}
 	}
@@ -223,7 +217,7 @@ func newMsgQueue(p peer.ID) *msgQueue {
 	return mq
 }
 
-func (mq *msgQueue) addMessage(msg bsmsg.BitSwapMessage) {
+func (mq *msgQueue) addMessage(entries []*bsmsg.Entry) {
 	mq.outlk.Lock()
 	defer func() {
 		mq.outlk.Unlock()
@@ -233,26 +227,19 @@ func (mq *msgQueue) addMessage(msg bsmsg.BitSwapMessage) {
 		}
 	}()
 
-	if msg.Full() {
-		log.Error("GOt FULL MESSAGE")
-	}
-
 	// if we have no message held, or the one we are given is full
 	// overwrite the one we are holding
-	if mq.out == nil || msg.Full() {
-		mq.out = msg
-		return
+	if mq.out == nil {
+		mq.out = bsmsg.New()
 	}
 
 	// TODO: add a msg.Combine(...) method
 	// otherwise, combine the one we are holding with the
 	// one passed in
-	for _, e := range msg.Wantlist() {
+	for _, e := range entries {
 		if e.Cancel {
-			log.Error("add message cancel: ", e.Key, mq.p)
 			mq.out.Cancel(e.Key)
 		} else {
-			log.Error("add message want: ", e.Key, mq.p)
 			mq.out.AddEntry(e.Key, e.Priority)
 		}
 	}
