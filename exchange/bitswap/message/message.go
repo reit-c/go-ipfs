@@ -51,8 +51,12 @@ type impl struct {
 	blocks   map[u.Key]*blocks.Block
 }
 
-func New(full bool) BitSwapMessage {
-	return newMsg(full)
+func NewFull() BitSwapMessage {
+	return newMsg(true)
+}
+
+func NewPartial() BitSwapMessage {
+	return newMsg(false)
 }
 
 func newMsg(full bool) *impl {

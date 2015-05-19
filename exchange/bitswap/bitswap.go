@@ -105,7 +105,7 @@ type Bitswap struct {
 	// network delivers messages on behalf of the session
 	network bsnet.BitSwapNetwork
 
-	// the peermanager manages sending messages to peers in a way that
+	// the WantManager manages sending messages to peers in a way that
 	// wont block bitswap operation
 	wm *WantManager
 
@@ -270,18 +270,22 @@ func (bs *Bitswap) ReceiveMessage(ctx context.Context, p peer.ID, incoming bsmsg
 	// TODO: this is bad, and could be easily abused.
 	// Should only track *useful* messages in ledger
 
-	if len(incoming.Blocks()) == 0 {
-		return
-	}
+	blocks := incoming.Blocks()
 
+	if len(blocks) > 0 {
+		bs.receiveBlocks(ctx, p, blocks)
+	}
+}
+
+func (bs *Bitswap) receiveBlocks(ctx context.Context, p peer.ID, blocks []*blocks.Block) {
 	// quickly send out cancels, reduces chances of duplicate block receives
 	var keys []u.Key
-	for _, block := range incoming.Blocks() {
+	for _, block := range blocks {
 		keys = append(keys, block.Key())
 	}
 	bs.wm.CancelWants(keys)
 
-	for _, block := range incoming.Blocks() {
+	for _, block := range blocks {
 		bs.counterLk.Lock()
 		bs.blocksRecvd++
 		if has, err := bs.blockstore.Has(block.Key()); err == nil && has {

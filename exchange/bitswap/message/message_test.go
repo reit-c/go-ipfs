@@ -13,7 +13,7 @@ import (
 
 func TestAppendWanted(t *testing.T) {
 	const str = "foo"
-	m := New(true)
+	m := NewFull()
 	m.AddEntry(u.Key(str), 1)
 
 	if !wantlistContains(m.ToProto().GetWantlist(), str) {
@@ -44,7 +44,7 @@ func TestAppendBlock(t *testing.T) {
 	strs = append(strs, "Celeritas")
 	strs = append(strs, "Incendia")
 
-	m := New(true)
+	m := NewFull()
 	for _, str := range strs {
 		block := blocks.NewBlock([]byte(str))
 		m.AddBlock(block)
@@ -61,7 +61,7 @@ func TestAppendBlock(t *testing.T) {
 
 func TestWantlist(t *testing.T) {
 	keystrs := []string{"foo", "bar", "baz", "bat"}
-	m := New(true)
+	m := NewFull()
 	for _, s := range keystrs {
 		m.AddEntry(u.Key(s), 1)
 	}
@@ -84,7 +84,7 @@ func TestWantlist(t *testing.T) {
 
 func TestCopyProtoByValue(t *testing.T) {
 	const str = "foo"
-	m := New(true)
+	m := NewFull()
 	protoBeforeAppend := m.ToProto()
 	m.AddEntry(u.Key(str), 1)
 	if wantlistContains(protoBeforeAppend.GetWantlist(), str) {
@@ -93,7 +93,7 @@ func TestCopyProtoByValue(t *testing.T) {
 }
 
 func TestToNetFromNetPreservesWantList(t *testing.T) {
-	original := New(true)
+	original := NewFull()
 	original.AddEntry(u.Key("M"), 1)
 	original.AddEntry(u.Key("B"), 1)
 	original.AddEntry(u.Key("D"), 1)
@@ -124,7 +124,7 @@ func TestToNetFromNetPreservesWantList(t *testing.T) {
 
 func TestToAndFromNetMessage(t *testing.T) {
 
-	original := New(true)
+	original := NewFull()
 	original.AddBlock(blocks.NewBlock([]byte("W")))
 	original.AddBlock(blocks.NewBlock([]byte("E")))
 	original.AddBlock(blocks.NewBlock([]byte("F")))
@@ -172,7 +172,7 @@ func contains(strs []string, x string) bool {
 
 func TestDuplicates(t *testing.T) {
 	b := blocks.NewBlock([]byte("foo"))
-	msg := New(true)
+	msg := NewFull()
 
 	msg.AddEntry(b.Key(), 1)
 	msg.AddEntry(b.Key(), 1)

@@ -96,12 +96,12 @@ func (pm *WantManager) SendBlock(ctx context.Context, env *engine.Envelope) {
 	// throughout the network stack
 	defer env.Sent()
 
-	msg := bsmsg.New(false)
+	msg := bsmsg.NewPartial()
 	msg.AddBlock(env.Block)
 	log.Infof("Sending block %s to %s", env.Peer, env.Block)
 	err := pm.network.SendMessage(ctx, env.Peer, msg)
 	if err != nil {
-		log.Error(err)
+		log.Warningf("sendblock error: %s", err)
 	}
 }
 
@@ -115,7 +115,7 @@ func (pm *WantManager) startPeerHandler(p peer.ID) *msgQueue {
 	mq := newMsgQueue(p)
 
 	// new peer, we will want to give them our full wantlist
-	fullwantlist := bsmsg.New(true)
+	fullwantlist := bsmsg.NewFull()
 	for _, e := range pm.wl.Entries() {
 		fullwantlist.AddEntry(e.Key, e.Priority)
 	}
@@ -138,14 +138,14 @@ func (pm *WantManager) stopPeerHandler(p peer.ID) {
 	delete(pm.peers, p)
 }
 
-func (pm *WantManager) runQueue(mq *msgQueue) {
+func runQueue(pm *WantManager, mq *msgQueue) {
 	for {
 		select {
 		case <-mq.work: // there is work to be done
 
 			err := pm.network.ConnectTo(pm.ctx, mq.p)
 			if err != nil {
-				log.Errorf("cant connect to peer %s: %s", mq.p, err)
+				log.Noticef("cant connect to peer %s: %s", mq.p, err)
 				// TODO: cant connect, what now?
 				continue
 			}
@@ -163,7 +163,7 @@ func (pm *WantManager) runQueue(mq *msgQueue) {
 			// send wantlist updates
 			err = pm.network.SendMessage(pm.ctx, mq.p, wlm)
 			if err != nil {
-				log.Error("bitswap send error: ", err)
+				log.Warningf("bitswap send error: %s", err)
 				// TODO: what do we do if this fails?
 			}
 		case <-mq.done:
@@ -209,7 +209,7 @@ func (pm *WantManager) Run() {
 			}
 			for _, p := range pm.peers {
 				p.outlk.Lock()
-				p.out = bsmsg.New(true)
+				p.out = bsmsg.NewFull()
 				p.outlk.Unlock()
 
 				p.addMessage(es)
@@ -243,10 +243,9 @@ func (mq *msgQueue) addMessage(entries []*bsmsg.Entry) {
 		}
 	}()
 
-	// if we have no message held, or the one we are given is full
-	// overwrite the one we are holding
+	// if we have no message held overwrite the one we are holding
 	if mq.out == nil {
-		mq.out = bsmsg.New(false)
+		mq.out = bsmsg.NewPartial()
 	}
 
 	// TODO: add a msg.Combine(...) method

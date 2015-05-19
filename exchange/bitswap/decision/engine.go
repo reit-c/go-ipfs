@@ -192,7 +192,10 @@ func (e *Engine) MessageReceived(p peer.ID, m bsmsg.BitSwapMessage) error {
 	e.lock.Lock()
 	defer e.lock.Unlock()
 
-	if len(m.Wantlist()) == 0 && len(m.Blocks()) == 0 {
+	// do this only once because its turning a map into a slice
+	wantlist := m.Wantlist()
+
+	if len(wantlist) == 0 && len(m.Blocks()) == 0 {
 		log.Debugf("received empty message from %s", p)
 	}
 
@@ -208,7 +211,7 @@ func (e *Engine) MessageReceived(p peer.ID, m bsmsg.BitSwapMessage) error {
 		l.wantList = wl.New()
 	}
 
-	for _, entry := range m.Wantlist() {
+	for _, entry := range wantlist {
 		if entry.Cancel {
 			log.Debugf("cancel %s", entry.Key)
 			l.CancelWant(entry.Key)
