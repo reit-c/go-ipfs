@@ -59,6 +59,14 @@ func (cjdns *cjdnsService) pollPeerStats() {
 					log.Error("malformed key: %s", peer.PublicKey.String())
 				}
 				log.Debugf("cjdns peer: %s", k.IP())
+
+				maddr, err := manet.FromNetAddr(&met.TCPAddr{
+					IP:   k.ip(),
+					Port: 4001,
+				})
+
+				ctx, _ := context.WithTimeout(context.TODO(), time.Second*10)
+				cjdns.host.Network().dialAddr(ctx)
 			}
 		}
 	}
