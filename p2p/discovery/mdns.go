@@ -2,7 +2,6 @@ package discovery
 
 import (
 	"errors"
-	"io"
 	"io/ioutil"
 	golog "log"
 	"net"
@@ -15,22 +14,9 @@ import (
 
 	"github.com/ipfs/go-ipfs/p2p/host"
 	"github.com/ipfs/go-ipfs/p2p/peer"
-	u "github.com/ipfs/go-ipfs/util"
 )
 
-var log = u.Logger("mdns")
-
 const ServiceTag = "discovery.ipfs.io"
-
-type Service interface {
-	io.Closer
-	RegisterNotifee(Notifee)
-	UnregisterNotifee(Notifee)
-}
-
-type Notifee interface {
-	HandlePeerFound(peer.PeerInfo)
-}
 
 type mdnsService struct {
 	server  *mdns.Server

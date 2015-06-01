@@ -293,6 +293,14 @@ func setupDiscoveryOption(d config.Discovery) DiscoveryOption {
 			}
 			return discovery.NewMdnsService(h, time.Duration(d.MDNS.Interval)*time.Second)
 		}
+	} else if d.Cjdns.Enabled {
+		return func(h p2phost.Host) (discovery.Service, error) {
+			interval := d.Cjdns.Interval
+			if interval == 0 {
+				interval = 5
+			}
+			return discovery.NewCjdnsService(h, time.Duration(interval)*time.Second)
+		}
 	}
 	return nil
 }

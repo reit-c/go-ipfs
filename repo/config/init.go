@@ -51,7 +51,11 @@ func Init(out io.Writer, nBitsForKeypair int) (*Config, error) {
 		Discovery: Discovery{MDNS{
 			Enabled:  true,
 			Interval: 10,
-		}},
+		},
+			Cjdns{
+				Enabled:  false,
+				Interval: 10,
+			}},
 		Log: Log{
 			MaxSizeMB:  250,
 			MaxBackups: 1,
