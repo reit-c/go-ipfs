@@ -81,6 +81,13 @@ func (b *BlockList) SetDecider(d Decider) {
 	b.mu.Unlock()
 }
 
+func (b *BlockList) GetDecider() Decider {
+	b.mu.RLock()
+	d := b.Decider
+	b.mu.RUnlock()
+	return d
+}
+
 func (b *BlockList) ShouldBlock(s string) bool {
 	return !b.ShouldAllow(s)
 }

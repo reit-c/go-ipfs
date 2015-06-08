@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	_ "expvar"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	_ "github.com/ipfs/go-ipfs/Godeps/_workspace/src/github.com/codahale/metrics/runtime"
 	ma "github.com/ipfs/go-ipfs/Godeps/_workspace/src/github.com/jbenet/go-multiaddr"
@@ -24,14 +26,16 @@ import (
 )
 
 const (
-	initOptionKwd             = "init"
-	routingOptionKwd          = "routing"
-	routingOptionSupernodeKwd = "supernode"
-	mountKwd                  = "mount"
-	writableKwd               = "writable"
-	ipfsMountKwd              = "mount-ipfs"
-	ipnsMountKwd              = "mount-ipns"
-	unrestrictedApiAccess     = "unrestricted-api"
+	initOptionKwd               = "init"
+	routingOptionKwd            = "routing"
+	routingOptionSupernodeKwd   = "supernode"
+	mountKwd                    = "mount"
+	writableKwd                 = "writable"
+	ipfsMountKwd                = "mount-ipfs"
+	ipnsMountKwd                = "mount-ipns"
+	unrestrictedApiAccess       = "unrestricted-api"
+	blockListKwd                = "blocklist"
+	refreshBlockListIntervalKwd = "refresh-blocklist-interval"
 	// apiAddrKwd    = "address-api"
 	// swarmAddrKwd  = "address-swarm"
 )
@@ -76,6 +80,8 @@ the port as you would other services or database (firewall, authenticated proxy,
 		cmds.StringOption(ipfsMountKwd, "Path to the mountpoint for IPFS (if using --mount)"),
 		cmds.StringOption(ipnsMountKwd, "Path to the mountpoint for IPNS (if using --mount)"),
 		cmds.BoolOption(unrestrictedApiAccess, "Allow API access to unlisted hashes"),
+		cmds.StringOption(blockListKwd, "File with keys that should not be served by the gateway"),
+		cmds.IntOption(refreshBlockListIntervalKwd, "Re-read blocklist file every <interval> seconds"),
 
 		// TODO: add way to override addresses. tricky part: updating the config if also --init.
 		// cmds.StringOption(apiAddrKwd, "Address for the daemon rpc API (overrides config)"),
@@ -261,22 +267,28 @@ func serveHTTPApi(req cmds.Request) (error, <-chan error) {
 		return fmt.Errorf("serveHTTPApi: Option(%s) failed: %s", unrestrictedApiAccess, err), nil
 	}
 
-	apiGw := corehttp.NewGateway(corehttp.GatewayConfig{
-		Writable: true,
-		BlockList: &corehttp.BlockList{
-			Decider: func(s string) bool {
-				if unrestricted {
+	blockList := &corehttp.BlockList{
+		Decider: func(s string) bool {
+			if unrestricted {
+				return true
+			}
+			// for now, only allow paths in the WebUI path
+			for _, webuipath := range corehttp.WebUIPaths {
+				if strings.HasPrefix(s, webuipath) {
 					return true
 				}
-				// for now, only allow paths in the WebUI path
-				for _, webuipath := range corehttp.WebUIPaths {
-					if strings.HasPrefix(s, webuipath) {
-						return true
-					}
-				}
-				return false
-			},
+			}
+			return false
 		},
+	}
+	err = setupBlockList(req, blockList)
+	if err != nil {
+		return fmt.Errorf("serveHTTPApi: setupBlockList() failed: %s", err), nil
+	}
+
+	apiGw := corehttp.NewGateway(corehttp.GatewayConfig{
+		Writable:  true,
+		BlockList: blockList,
 	})
 	var opts = []corehttp.ServeOption{
 		corehttp.CommandsOption(*req.Context()),
@@ -423,4 +435,59 @@ func merge(cs ...<-chan error) <-chan error {
 		close(out)
 	}()
 	return out
+}
+
+func setupBlockList(req cmds.Request, blockList *corehttp.BlockList) error {
+	blockListPath, _, err := req.Option(blockListKwd).String()
+	if err != nil {
+		return err
+	}
+
+	blockListInterval, _, err := req.Option(refreshBlockListIntervalKwd).Int()
+	if err != nil {
+		return err
+	}
+
+	runBlockListWorker(blockList, blockListPath, time.Duration(blockListInterval))
+
+	return nil
+}
+
+func runBlockListWorker(blockList *corehttp.BlockList, path string, interval time.Duration) error {
+	if path == "" {
+		return nil
+	}
+	baseDecider := blockList.GetDecider()
+	go func() {
+		for _ = range time.Tick(interval * time.Second) {
+			log.Debug("updating the blocklist...")
+			func() { // in a func to allow defer f.Close()
+				f, err := os.Open(path)
+				if err != nil {
+					log.Error(err)
+				}
+				defer f.Close()
+				scanner := bufio.NewScanner(f)
+				blocked := make(map[string]struct{}) // Implement using Bloom Filter hybrid if blocklist gets large
+				for scanner.Scan() {
+					t := scanner.Text()
+					blocked[t] = struct{}{}
+				}
+
+				// If an error occurred, do not change the existing decider. This
+				// is to avoid accidentally clearing the list if the deploy is
+				// botched.
+				if err := scanner.Err(); err != nil {
+					log.Error("blocklist update failed: %s", err)
+				} else {
+					blockList.SetDecider(func(s string) bool {
+						_, isBlocked := blocked[s]
+						return !isBlocked || baseDecider(s)
+					})
+					log.Info("updated the blocklist (%d entries)", len(blocked))
+				}
+			}()
+		}
+	}()
+	return nil
 }
